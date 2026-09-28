@@ -6,6 +6,7 @@ use EasyPixel\Exception\AuthenticationException;
 use EasyPixel\Exception\EasyPixelException;
 use EasyPixel\Exception\HttpException;
 use EasyPixel\Exception\NotFoundException;
+use EasyPixel\Exception\RateLimitException;
 use EasyPixel\Exception\ValidationException;
 
 class HttpClient
@@ -59,6 +60,19 @@ class HttpClient
     public function post($path, array $data = [], array $headers = [])
     {
         return $this->request('POST', $path, ['headers' => $headers, 'body' => $data]);
+    }
+
+    /**
+     * Add or replace a header sent with every request.
+     *
+     * @param string $name
+     * @param string $value
+     * @return $this
+     */
+    public function setDefaultHeader($name, $value)
+    {
+        $this->defaultHeaders[$name] = $value;
+        return $this;
     }
 
     /**
@@ -127,6 +141,9 @@ class HttpClient
         $body    = $result['body'];
         $decoded = null;
 
+        // Subclasses may override executeCurl() without returning headers.
+        $responseHeaders = isset($result['headers']) ? $result['headers'] : [];
+
         if ($body !== '' && $body !== false) {
             $decoded = json_decode($body, true);
         }
@@ -137,7 +154,7 @@ class HttpClient
 
         if ($status >= 400) {
             $message = isset($decoded['message']) ? $decoded['message'] : 'HTTP Error ' . $status;
-            $this->throwForStatus($status, $message, $decoded);
+            $this->throwForStatus($status, $message, $decoded, $responseHeaders);
         }
 
         return $decoded;
@@ -148,12 +165,21 @@ class HttpClient
      *
      * @param string $url
      * @param array  $curlOptions
-     * @return array{body: string|false, status: int, error: string|null}
+     * @return array{body: string|false, status: int, error: string|null, headers: array}
      */
     protected function executeCurl($url, array $curlOptions)
     {
         $ch = curl_init($url);
         curl_setopt_array($ch, $curlOptions);
+
+        $responseHeaders = [];
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $line) use (&$responseHeaders) {
+            $parts = explode(':', $line, 2);
+            if (count($parts) === 2) {
+                $responseHeaders[strtolower(trim($parts[0]))] = trim($parts[1]);
+            }
+            return strlen($line);
+        });
 
         $body   = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -162,9 +188,10 @@ class HttpClient
         curl_close($ch);
 
         return [
-            'body'   => $body,
-            'status' => $status,
-            'error'  => $error,
+            'body'    => $body,
+            'status'  => $status,
+            'error'   => $error,
+            'headers' => $responseHeaders,
         ];
     }
 
@@ -193,11 +220,12 @@ class HttpClient
      * @param int    $status
      * @param string $message
      * @param array  $response
+     * @param array  $headers Response headers, keys lowercased
      * @return void
      *
      * @throws HttpException
      */
-    protected function throwForStatus($status, $message, array $response)
+    protected function throwForStatus($status, $message, array $response, array $headers = [])
     {
         switch ($status) {
             case 401:
@@ -207,8 +235,46 @@ class HttpClient
                 throw new NotFoundException($message, $status, null, $response);
             case 422:
                 throw new ValidationException($message, $status, null, $response);
+            case 429:
+                throw new RateLimitException(
+                    $message,
+                    $status,
+                    null,
+                    $response,
+                    $this->parseRetryAfter($headers)
+                );
             default:
                 throw new HttpException($message, $status, null, $response);
         }
+    }
+
+    /**
+     * Read Retry-After as a number of seconds.
+     *
+     * RFC 7231 allows either a delay in seconds or an HTTP date; Laravel's
+     * throttle middleware sends seconds, but a proxy in front of it may not.
+     *
+     * @param array $headers Response headers, keys lowercased
+     * @return int|null
+     */
+    protected function parseRetryAfter(array $headers)
+    {
+        if (!isset($headers['retry-after'])) {
+            return null;
+        }
+
+        $value = trim($headers['retry-after']);
+
+        if (is_numeric($value)) {
+            return max(0, (int) $value);
+        }
+
+        $timestamp = strtotime($value);
+
+        if ($timestamp === false) {
+            return null;
+        }
+
+        return max(0, $timestamp - time());
     }
 }

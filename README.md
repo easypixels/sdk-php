@@ -1,107 +1,87 @@
 # EasyPixel PHP SDK
 
-PHP SDK for the [EasyPixel](https://easypixel.ru) LED matrix management API.
+PHP SDK for sending scenes to [EasyPixel](https://easypixel.ru) LED matrices.
 
-[![Tests](https://github.com/easypixel/sdk-php/actions/workflows/tests.yml/badge.svg)](https://github.com/easypixel/sdk-php/actions/workflows/tests.yml)
-[![PHP Version](https://img.shields.io/badge/php-%3E%3D7.0-8892BF.svg)](https://php.net/)
+[![Tests](https://github.com/easypixels/sdk-php/actions/workflows/tests.yml/badge.svg)](https://github.com/easypixels/sdk-php/actions/workflows/tests.yml)
+[![PHP Version](https://img.shields.io/badge/php-%3E%3D7.2-8892BF.svg)](https://php.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Requirements
 
-- PHP 7.0 or higher
+- PHP 7.2 or higher
 - PHP extensions: `curl`, `json`
 
 ## Installation
 
+Add the repository and require the package:
+
+```json
+{
+    "repositories": [
+        { "type": "vcs", "url": "https://github.com/easypixels/sdk-php.git" }
+    ],
+    "require": {
+        "easypixels/sdk-php": "^1.0"
+    }
+}
+```
+
 ```bash
-composer require easypixel/sdk-php
+composer update easypixels/sdk-php
 ```
 
 ## Quick Start
 
 ```php
-use EasyPixel\Manager;
+use EasyPixel\Webhook;
 
-$manager = new Manager('your-bearer-token');
+$webhook = new Webhook('matrix-api-key');
 
-// Send a scene to one specific matrix
-$manager->matrix('matrix-api-key')->send(42);
-
-// Broadcast to all your matrices at once
-$manager->broadcast(42, ['count' => '15', 'status' => 'open']);
+// Show scene 42 on that matrix, filling in two of its variables
+$webhook->send(42, ['count' => '15', 'status' => 'open']);
 ```
 
 ---
 
 ## Authentication
 
-EasyPixel uses two types of credentials:
+The SDK uses one credential: the **matrix API key**, a 32-character hex string you copy from
+the EasyPixel web app in the settings of that matrix. It is scoped to a single matrix and can
+do exactly one thing — show a scene from the scenario assigned to it.
 
-| Credential | Where to get | Used for |
-|---|---|---|
-| **Bearer token** | EasyPixel web app → Profile → API Token | Reading data, pushing scenes via authenticated API |
-| **Matrix API key** | EasyPixel web app → Matrix settings | Sending webhooks to a specific matrix |
-
----
-
-## Classes
-
-### `EasyPixel\Manager` — recommended entry point
-
-The Manager combines the authenticated Client with per-matrix webhook senders. Best choice when working with multiple matrices.
-
-```php
-use EasyPixel\Manager;
-
-$manager = new Manager(
-    token:   'your-bearer-token',
-    baseUrl: 'https://api.easypixel.ru'  // optional, this is the default
-);
-
-// Access the authenticated API client
-$matrices = $manager->client()->getMatrices();
-
-// Get a Webhook for a specific matrix (instances are cached)
-$webhook = $manager->matrix('matrix-api-key-here');
-$webhook->send(42, ['temperature' => '22.5']);
-
-// Send to a specific set of matrices
-$results = $manager->sendToMatrices(
-    ['api-key-1', 'api-key-2', 'api-key-3'],
-    sceneId:   42,
-    variables: ['count' => '5']
-);
-
-// Broadcast to ALL matrices of the account
-$results = $manager->broadcast(42, ['status' => 'open']);
-```
-
-`sendToMatrices()` and `broadcast()` return an array of results. Errors per matrix are caught and returned inline — one failed matrix does not stop the rest:
-
-```php
-foreach ($results as $matrixId => $result) {
-    if (isset($result['error']) && $result['error']) {
-        echo "Matrix {$matrixId} failed: {$result['message']}\n";
-    } else {
-        echo "Matrix {$matrixId}: scene {$result['scene_id']} sent\n";
-    }
-}
-```
+The key travels in the URL (`POST /api/webhook/{api_key}`), so treat it like a password: keep
+it out of the repository and out of client-side code. If it leaks, issue a new one with
+`POST /api/matrices/{matrix}/regenerate-api-key`; the old key stops working immediately.
 
 ---
 
-### `EasyPixel\Webhook` — simple webhook sender
+## Rate Limits
 
-Use this when you only need to send scenes and don't need to read API data.
+The webhook endpoint is throttled twice, and both limits apply at once:
+
+| Limit | Scope |
+|---|---|
+| 120 requests / minute | per client IP address |
+| 60 requests / minute | per matrix API key |
+
+Driving several matrices from one host hits the IP limit first: 60 requests per key sounds
+generous until three matrices share one server's address. Over either limit the API answers
+`429` and the SDK throws `RateLimitException`, whose `getRetryAfter()` carries the
+`Retry-After` header in seconds (`null` if the server did not send one). Schedule the retry
+from that value.
+
+---
+
+## Sending scenes
 
 ```php
 use EasyPixel\Webhook;
 
-// Using constructor
+// Using the constructor
 $webhook = new Webhook('matrix-api-key');
 $result  = $webhook->send(42);
 
-// Using static factory
+// Using the static factory
 $webhook = Webhook::create('matrix-api-key');
 $result  = $webhook->send(42, ['count' => '100', 'label' => 'Free spots']);
 
@@ -114,46 +94,18 @@ $result  = $webhook->send(42, ['count' => '100', 'label' => 'Free spots']);
 // ]
 ```
 
-**Important:** The webhook returns `202 Accepted` immediately. The scene is rendered and sent to the hardware asynchronously. There is no delivery confirmation.
+The scene must belong to the scenario currently assigned to that matrix, otherwise the API
+answers `422`.
 
----
+**Important:** the webhook returns `202 Accepted` immediately. The scene is rendered and sent
+to the hardware asynchronously. There is no delivery confirmation.
 
-### `EasyPixel\Client` — full API client
+`variables_updated` lists only the variables the matrix's scenario actually defines — unknown
+names are ignored without an error, so compare that list against what you sent if a value never
+shows up on the panel.
 
-Use this to read data from the EasyPixel API. Requires a Bearer token.
-
-```php
-use EasyPixel\Client;
-
-$client = new Client('your-bearer-token');
-
-// List all matrices
-$matrices = $client->getMatrices();
-// [
-//     ['id' => 1, 'name' => 'Entrance', 'api_key' => 'abc123...', 'webhook_url' => '...', ...],
-//     ...
-// ]
-
-// List all scenarios
-$scenarios = $client->getScenarios();
-
-// List scenes in a scenario
-$scenes = $client->getScenes(scenarioId: 10);
-// [
-//     ['id' => 42, 'name' => 'Welcome', 'type' => 'dynamic', 'is_default' => true, ...],
-//     ...
-// ]
-
-// List scene variables in a scenario
-$variables = $client->getVariables(scenarioId: 10);
-// [
-//     ['id' => 1, 'name' => 'count', 'source' => 'webhook', 'resolved_value' => '5', ...],
-//     ...
-// ]
-
-// Push a scene via the authenticated API (synchronous, requires scene to be in assigned scenario)
-$result = $client->pushScene(matrixId: 1, sceneId: 42);
-```
+Values are cast with `strval()`, so integers and floats can be passed as they are. Beware of
+`false`, which becomes an empty string.
 
 ---
 
@@ -165,6 +117,7 @@ All SDK methods throw exceptions from the `EasyPixel\Exception` namespace:
 use EasyPixel\Exception\EasyPixelException;
 use EasyPixel\Exception\AuthenticationException;
 use EasyPixel\Exception\NotFoundException;
+use EasyPixel\Exception\RateLimitException;
 use EasyPixel\Exception\ValidationException;
 use EasyPixel\Exception\HttpException;
 
@@ -179,8 +132,13 @@ try {
     echo "API error: " . $e->getMessage();
     // $e->getErrors() returns validation error details if available
 
+} catch (RateLimitException $e) {
+    // 429: throttled — see "Rate Limits" above.
+    // getRetryAfter() is null when the server sent no Retry-After header.
+    echo "Throttled, retry in " . $e->getRetryAfter() . "s";
+
 } catch (AuthenticationException $e) {
-    // 401 / 403: Invalid or expired Bearer token
+    // 401 / 403
     echo "Authentication failed: " . $e->getMessage();
 
 } catch (HttpException $e) {
@@ -199,116 +157,50 @@ EasyPixelException (RuntimeException)
 └── HttpException
     ├── AuthenticationException  (401, 403)
     ├── NotFoundException        (404)
-    └── ValidationException      (422)
-```
-
----
-
-## Laravel Integration
-
-### Setup
-
-1. Install the package:
-   ```bash
-   composer require easypixel/sdk-php
-   ```
-
-2. The ServiceProvider is auto-discovered in Laravel 5.5+. No manual registration needed.
-
-3. Add your credentials to `.env`:
-   ```dotenv
-   EASYPIXEL_TOKEN=your-sanctum-bearer-token
-   EASYPIXEL_URL=https://api.easypixel.ru
-   ```
-
-4. Optionally publish the config file:
-   ```bash
-   php artisan vendor:publish --tag=easypixel
-   ```
-   This creates `config/easypixel.php`.
-
-### Using the Facade
-
-```php
-use EasyPixel\Laravel\Facades\EasyPixel;
-
-// Send a scene to one matrix
-EasyPixel::matrix('matrix-api-key')->send(42, ['count' => '10']);
-
-// Broadcast to all matrices
-$results = EasyPixel::broadcast(42, ['status' => 'open']);
-
-// Read data via the client
-$matrices  = EasyPixel::client()->getMatrices();
-$scenarios = EasyPixel::client()->getScenarios();
-$scenes    = EasyPixel::client()->getScenes(10);
-```
-
-### Using Dependency Injection
-
-```php
-use EasyPixel\Manager;
-use EasyPixel\Client;
-
-class MatrixController extends Controller
-{
-    public function __construct(
-        private Manager $manager,
-        private Client  $client,
-    ) {}
-
-    public function notify(): JsonResponse
-    {
-        $results = $this->manager->broadcast(42, ['count' => (string) Order::pending()->count()]);
-        return response()->json($results);
-    }
-}
+    ├── ValidationException      (422)
+    └── RateLimitException       (429)
 ```
 
 ---
 
 ## Working with Multiple Matrices
 
-Typical workflow when managing many matrices:
+Keep the API keys in your own configuration and walk them, so one failing matrix does not stop
+the rest:
 
 ```php
-use EasyPixel\Manager;
+use EasyPixel\Webhook;
+use EasyPixel\Exception\RateLimitException;
+use EasyPixel\Exception\EasyPixelException;
 
-$manager = new Manager('your-bearer-token');
+$apiKeys = config('parking.easypixel_keys'); // ['entrance' => 'abc…', 'exit' => 'def…']
+$sceneId = 42;
+$variables = ['free_spots' => (string) getParkingFreeSpots()];
 
-// Step 1: List all matrices and find the scene IDs you need
-$matrices  = $manager->client()->getMatrices();
-$scenarios = $manager->client()->getScenarios();
-
-// Step 2: Find scenes for a scenario
-$scenes = $manager->client()->getScenes($scenarios[0]['id']);
-$sceneId = $scenes[0]['id'];
-
-// Step 3: Broadcast to all matrices with current variable values
-$results = $manager->broadcast($sceneId, [
-    'free_spots' => (string) getParkingFreeSpots(),
-    'status'     => getStatusLabel(),
-]);
-
-// Or send to a subset
-$apiKeys = array_column($matrices, 'api_key');
-$subset  = array_slice($apiKeys, 0, 5);
-$results = $manager->sendToMatrices($subset, $sceneId, ['count' => '42']);
+foreach ($apiKeys as $name => $apiKey) {
+    try {
+        Webhook::create($apiKey)->send($sceneId, $variables);
+        echo "{$name}: sent\n";
+    } catch (RateLimitException $e) {
+        echo "{$name}: throttled, retry in {$e->getRetryAfter()}s\n";
+    } catch (EasyPixelException $e) {
+        echo "{$name}: {$e->getMessage()}\n";
+    }
+}
 ```
+
+Each `Webhook` carries its own `HttpClient`, so keep one instance per matrix and reuse it.
 
 ---
 
-## Custom Base URL
+## Timeouts
 
-For self-hosted EasyPixel instances:
+The request timeout defaults to 30 seconds and the connection timeout to 10. Both are set on
+the underlying HTTP client:
 
 ```php
-$manager = new Manager('your-token', 'https://easypixel.yourcompany.com');
-$webhook = new Webhook('matrix-key', 'https://easypixel.yourcompany.com');
-$client  = new Client('your-token', 'https://easypixel.yourcompany.com');
+$webhook->getHttpClient()->setTimeout(5)->setConnectTimeout(2);
 ```
-
-In Laravel, set `EASYPIXEL_URL` in `.env`.
 
 ---
 

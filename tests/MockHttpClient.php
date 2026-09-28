@@ -24,14 +24,16 @@ class MockHttpClient extends HttpClient
      * @param int         $statusCode  HTTP status code
      * @param array|null  $body        Response body (will be JSON-encoded)
      * @param string|null $curlError   cURL error message (null = no error)
+     * @param array       $headers     Response headers, keys lowercased
      * @return $this
      */
-    public function addResponse($statusCode, $body = [], $curlError = null)
+    public function addResponse($statusCode, $body = [], $curlError = null, array $headers = [])
     {
         $this->responseQueue[] = [
-            'status' => $statusCode,
-            'body'   => $body !== null ? json_encode($body) : '',
-            'error'  => $curlError,
+            'status'  => $statusCode,
+            'body'    => $body !== null ? json_encode($body) : '',
+            'error'   => $curlError,
+            'headers' => $headers,
         ];
         return $this;
     }
@@ -77,9 +79,10 @@ class MockHttpClient extends HttpClient
 
         if (empty($this->responseQueue)) {
             return [
-                'body'   => json_encode(['message' => 'No more queued responses']),
-                'status' => 500,
-                'error'  => null,
+                'body'    => json_encode(['message' => 'No more queued responses']),
+                'status'  => 500,
+                'error'   => null,
+                'headers' => [],
             ];
         }
 

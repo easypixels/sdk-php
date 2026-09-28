@@ -5,8 +5,8 @@ namespace EasyPixel;
 /**
  * EasyPixel Webhook client using matrix API key authentication.
  *
- * Allows external systems to trigger scene display on a specific matrix
- * without a full Bearer token. The API key is embedded in the URL.
+ * The API key is embedded in the URL and is scoped to one matrix: it can show
+ * a scene from the scenario assigned to that matrix, and nothing else.
  *
  * Example:
  *   $webhook = new Webhook('your-matrix-api-key');
@@ -29,13 +29,9 @@ class Webhook
     {
         $this->apiKey = $apiKey;
 
-        if ($httpClient !== null) {
-            $this->httpClient = $httpClient;
-        } else {
-            $this->httpClient = new HttpClient($baseUrl, [
-                'Accept' => 'application/json',
-            ]);
-        }
+        $this->httpClient = $httpClient !== null ? $httpClient : new HttpClient($baseUrl);
+
+        $this->httpClient->setDefaultHeader('Accept', 'application/json');
     }
 
     /**
