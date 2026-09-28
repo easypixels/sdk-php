@@ -1,0 +1,38 @@
+{
+    "name": "easypixel/sdk-php",
+    "description": "PHP SDK for EasyPixel LED matrix management API",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["easypixel", "led", "matrix", "pixel", "api", "sdk", "webhook"],
+    "homepage": "https://github.com/easypixel/sdk-php",
+    "require": {
+        "php": ">=7.0",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^6.5 || ^7.5 || ^8.5 || ^9.0 || ^10.0 || ^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "EasyPixel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "EasyPixel\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "EasyPixel\\Laravel\\EasyPixelServiceProvider"
+            ],
+            "aliases": {
+                "EasyPixel": "EasyPixel\\Laravel\\Facades\\EasyPixel"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
