@@ -6,6 +6,10 @@ PHP SDK for sending scenes to [EasyPixel](https://easypixel.ru) LED matrices.
 [![PHP Version](https://img.shields.io/badge/php-%3E%3D7.2-8892BF.svg)](https://php.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+Using Laravel? [`easypixels/sdk-php-laravel`](https://github.com/easypixels/sdk-php-laravel)
+wraps this SDK in a service provider, a config file, a facade, a queued job and an artisan
+command.
+
 ## Requirements
 
 - PHP 7.2 or higher
